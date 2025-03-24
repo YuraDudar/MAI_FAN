@@ -1,0 +1,131 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from typing import Dict, List
+
+
+class ContractionMappingAnalyzer:
+    def __init__(self, q: float = 0.1, resolution: int = 1000):
+        self.q = q  # Коэффициент сжатия 1/10
+        self.resolution = resolution
+        self.t = np.linspace(0, 1, resolution)
+        self._initialize_parameters()
+
+    def _initialize_parameters(self):
+        """Инициализация параметров отображения"""
+        self.segments = [
+            (1 / 3, 4 / 9, 76.5, -25.5),
+            (4 / 9, 5 / 9, -18.0, 9.0),
+            (5 / 9, 2 / 3, 76.5, -43.5)
+        ]
+
+    def _compute_edge_values(self, x: np.ndarray) -> tuple:
+        """Вычисление граничных значений для средней части"""
+        a = self.q * x[-1] - 7.5  # x(1) для левой границы
+        b = self.q * x[0] + 7.5  # x(0) для правой границы
+        return a, b
+
+    def apply_mapping(self, x: np.ndarray) -> np.ndarray:
+        """Применение оператора T к функции x"""
+        a, b = self._compute_edge_values(x)
+        new_x = np.zeros_like(x)
+
+        # Левая часть [0, 1/3]
+        left_mask = self.t <= 1 / 3
+        scaled_t = 3 * self.t[left_mask]
+        new_x[left_mask] = self.q * np.interp(scaled_t, self.t, x) - 7.5
+
+        # Средняя часть (1/3, 2/3)
+        middle_mask = (self.t > 1 / 3) & (self.t < 2 / 3)
+        for t_start, t_end, k, bias in self.segments:
+            seg_mask = (self.t > t_start) & (self.t <= t_end)
+            new_x[seg_mask] = k * self.t[seg_mask] + bias
+            new_x[seg_mask] += (1 - k * (t_end - t_start) / (4 / 9 - 1 / 3)) * (a if t_start < 4 / 9 else b)
+
+        # Правая часть [2/3, 1]
+        right_mask = self.t >= 2 / 3
+        scaled_t = 3 * self.t[right_mask] - 2
+        new_x[right_mask] = self.q * np.interp(scaled_t, self.t, x) + 7.5
+
+        return new_x
+
+    def run_iterations(self, initial_func: np.ndarray, max_iter: int = 9) -> Dict[str, np.ndarray]:
+        """Выполнение итераций с сохранением результатов"""
+        history = {
+            'functions': [initial_func.copy()],
+            'differences': []
+        }
+
+        for _ in range(max_iter):
+            new_func = self.apply_mapping(history['functions'][-1])
+            difference = np.abs(new_func - history['functions'][-1])
+
+            history['functions'].append(new_func)
+            history['differences'].append(difference)
+
+        return history
+
+    def plot_iteration_details(self, history: Dict[str, np.ndarray]):
+        """Визуализация деталей итераций"""
+        plt.figure(figsize=(14, 16))
+
+        # Графики функций и разностей
+        for i in range(len(history['differences'])):
+            # Графики функций
+            plt.subplot(len(history['differences']), 2, 2 * i + 1)
+            plt.plot(self.t, history['functions'][i], label=f'x_{i}', color='blue')
+            plt.plot(self.t, history['functions'][i + 1], label=f'x_{i + 1}', color='red')
+            plt.grid(True, alpha=0.3)
+            plt.legend()
+            plt.title(f'Итерация {i + 1}: Функции')
+
+            # Графики разностей
+            plt.subplot(len(history['differences']), 2, 2 * i + 2)
+            plt.plot(self.t, history['differences'][i], color='green')
+            plt.grid(True, alpha=0.3)
+            plt.title(f'Итерация {i + 1}: Абсолютная разность')
+            plt.ylim(0, np.max(history['differences']) * 1.1)
+
+        plt.tight_layout()
+
+    def plot_all_differences(self, history: Dict[str, np.ndarray]):
+        """Совмещенный график всех разностей"""
+        plt.figure(figsize=(12, 6))
+
+        for i, diff in enumerate(history['differences']):
+            plt.plot(self.t, diff, alpha=0.7,
+                     label=f'Итерация {i + 1}')
+
+        plt.title('Эволюция абсолютной разности', fontsize=14)
+        plt.xlabel('t', fontsize=12)
+        plt.ylabel('|xₙ₊₁ - xₙ|', fontsize=12)
+        plt.grid(True, alpha=0.3)
+        plt.legend(ncol=3)
+        plt.yscale('log')
+        plt.tight_layout()
+
+
+# Параметры анализа
+config = {
+    'initial_condition': np.zeros(1000),
+    'max_iterations': 9,
+    'output_files': {
+        'all_plots': 'iteration_details.png',
+        'combined_diff': 'combined_differences.png'
+    }
+}
+
+# Инициализация и выполнение
+analyzer = ContractionMappingAnalyzer(q=0.1, resolution=1000)
+results = analyzer.run_iterations(config['initial_condition'],
+                                  config['max_iterations'])
+
+# Визуализация
+analyzer.plot_iteration_details(results)
+plt.savefig(config['output_files']['all_plots'])
+analyzer.plot_all_differences(results)
+plt.savefig(config['output_files']['combined_diff'])
+
+# Вывод максимальных разностей
+print("Максимальные абсолютные разности:")
+for i, diff in enumerate(results['differences']):
+    print(f"Итерация {i + 1}: {np.max(diff):.2e}")
