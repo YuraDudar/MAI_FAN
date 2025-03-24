@@ -1,0 +1,95 @@
+import numpy as np
+from typing import Callable, Tuple
+import matplotlib.pyplot as plt
+
+
+class ContractionMapper:
+    def __init__(self, q: float = 0.1, resolution: int = 1000):
+        self.q = q  # Коэффициент сжатия
+        self.t = np.linspace(0, 1, resolution)
+        self._init_f_t()  # Инициализация средней части f(t)
+
+    def _init_f_t(self):
+        """Инициализация параметров для средней части f(t)"""
+        self.points = [(1 / 3, None), (4 / 9, 1), (5 / 9, -1), (2 / 3, None)]
+        self.segments = []
+        # Вычисление линейных коэффициентов для каждого сегмента
+        for (t1, y1), (t2, y2) in zip(self.points[1:-1], self.points[2:]):
+            if y1 is not None and y2 is not None:
+                k = (y2 - y1) / (t2 - t1)
+                b = y1 - k * t1
+                self.segments.append((t1, t2, k, b))
+
+    def apply_mapping(self, x_prev: np.ndarray) -> np.ndarray:
+        """Применение оператора T к функции x_prev"""
+        x_next = np.zeros_like(x_prev)
+
+        # Левая часть: [0, 1/3]
+        mask = self.t <= 1 / 3
+        scaled_t = 3 * self.t[mask]
+        x_next[mask] = self.q * np.interp(scaled_t, self.t, x_prev) - 15 / 2
+
+        # Средняя часть: (1/3, 2/3)
+        mask = (self.t > 1 / 3) & (self.t < 2 / 3)
+        for t1, t2, k, b in self.segments:
+            seg_mask = (self.t > t1) & (self.t <= t2)
+            x_next[seg_mask & mask] = k * self.t[seg_mask & mask] + b
+
+        # Правая часть: [2/3, 1]
+        mask = self.t >= 2 / 3
+        scaled_t = 3 * self.t[mask] - 2
+        x_next[mask] = self.q * np.interp(scaled_t, self.t, x_prev) + 15 / 2
+
+        return x_next
+
+    def compute_iterations(self, eps: float, x0: np.ndarray) -> Tuple[int, np.ndarray]:
+        """Вычисление необходимого числа итераций и траектории"""
+        x_prev = x0.copy()
+        x_next = self.apply_mapping(x_prev)
+        iterations = [x_prev, x_next]
+
+        error = np.max(np.abs(x_next - x_prev))
+        n = 1
+
+        # Формула оценки числа итераций
+        if error > 0:
+            bound = (eps * (1 - self.q)) / error
+            n = max(1, int(np.ceil(np.log(bound) / np.log(self.q))))
+
+        # Уточнение итерациями
+        for _ in range(n - 1):
+            x_prev, x_next = x_next, self.apply_mapping(x_next)
+            iterations.append(x_next)
+
+        return n, np.array(iterations)
+
+    def visualize(self, iterations: np.ndarray, eps: float):
+        """Визуализация итераций"""
+        plt.figure(figsize=(12, 6))
+        for i, x in enumerate(iterations):
+            plt.plot(self.t, x, label=f'Iter {i}', alpha=0.7)
+        plt.title(f"Сходимость к неподвижной точке (ε={eps})")
+        plt.xlabel('t')
+        plt.ylabel('x(t)')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+
+# Параметры эксперимента
+epsilons = [1e-1, 1e-2, 1e-3]
+initial_functions = [
+    ('Нулевая', np.zeros(1000)),
+    ('Линейная', np.linspace(0, 1, 1000)),
+    ('Случайная', np.random.uniform(-1, 1, 1000))
+]
+
+# Проведение вычислений
+mapper = ContractionMapper(q=1 / 10, resolution=1000)
+
+for eps in epsilons:
+    print(f"\nАнализ для ε = {eps:.0e}")
+    for name, x0 in initial_functions:
+        n, iterations = mapper.compute_iterations(eps, x0)
+        print(f"Начальное приближение '{name}': {n} итераций")
+        mapper.visualize(iterations, eps)
